@@ -409,6 +409,7 @@ logisticLUSC$stage <- ifelse(logisticLUSC$tumor_stage.diagnoses=="stage ii" |
                                logisticLUSC$tumor_stage.diagnoses=="stage iiia" |
                                logisticLUSC$tumor_stage.diagnoses=="stage iiib" |
                                logisticLUSC$tumor_stage.diagnoses=="stage iv",1,0)
+# Other features/columns containing clinical variables have too many NA values
 
 logisticLUSC_full <- as.data.frame(logisticLUSC$stage)
 colnames(logisticLUSC_full)[which(names(logisticLUSC_full) == "logisticLUSC$stage")] <- "stage"
@@ -417,6 +418,8 @@ logisticLUSC_full$SLC47A2 <- logisticLUSC$SLC47A2
 logisticLUSC_full$age <- logisticLUSC$age_at_initial_pathologic_diagnosis
 logisticLUSC_full$dead <- logisticLUSC$dead
 logisticLUSC_full$new_tumor <- logisticLUSC$new_tumor_event_after_initial_treatment
+logisticLUSC_full$tissue_source_site <- logisticLUSC$name.tissue_source_site
+logisticLUSC_full$stage_complete <- as.factor(logisticLUSC$tumor_stage.diagnoses)
 logisticLUSC_full <- na.omit(logisticLUSC_full)
 
 # dead ~ CTSE + age_at_initial_pathologic_diagnosis + new_tumor_event_after_initial_treatment
@@ -470,3 +473,154 @@ y <- logisticLUSC_full$stage
 y_hat <- ifelse(fit_glm$fitted.values <= 0.5, 0, 1)
 confmat <- table(y, y_hat)
 sum(diag(confmat))/sum(confmat)
+
+# Logistic mixed effects models with random intercept
+library(lme4)
+library(insight)
+
+# death
+fit_glm <- glmer(dead ~ CTSE + new_tumor + (1 | tissue_source_site), data = logisticLUSC_full, family = binomial)
+summary(fit_glm)
+
+# Fixed effects
+fixef(fit_glm)
+
+alpha <- 0.05
+se <- sqrt(diag(vcov(fit_glm))) #standard errors
+# table of estimates with 95% CI using errors we obtained above
+CI_betas <- cbind(Est = fixef(fit_glm), 
+                  Lower = fixef(fit_glm) - qnorm(1-alpha/2) * se, 
+                  Upper = fixef(fit_glm) + qnorm(1-alpha/2) * se)
+round(CI_betas,3)
+
+CI_OR <- exp(CI_betas)
+round(CI_OR,3)
+
+# Having a new tumor a i t leads to a 7.738 times the risk of death
+
+# Random effect
+ranef(fit_glm)
+
+dotplot(ranef(fit_glm))
+
+# Variance Partitioning Coefficient
+sigma2_lat <- pi^2/3
+sigma2_lat
+
+# Variances of the school intercept
+print(VarCorr(fit_glm), comp = c("Variance", "Std.Dev."))
+
+sigma2_b<- as.numeric(get_variance_intercept(fit_glm))
+
+VPC <- sigma2_b/(sigma2_b+sigma2_lat)
+VPC
+#This VPC value means that 33% of variation in the response is attributed to the classification by tissue source site
+
+logit_p.hat <- predict(fit_glm, logisticLUSC_full)
+gl <- binomial(link=logit)
+p.hat<-gl$linkinv(logit_p.hat)
+p_threshold = sum(logisticLUSC_full$dead)/dim(logisticLUSC_full)[1]
+Y.hat <- ifelse(p.hat<p_threshold, 0, 1) 
+confusion.matrix <- table(Predicted = Y.hat, Observed = logisticLUSC_full$dead)
+confusion.matrix 
+
+# stage ~ new_tumor
+fit_glm <- glmer(stage ~ CTSE + SLC47A2 + age + new_tumor + (1 | tissue_source_site), data = logisticLUSC_full, family = binomial)
+summary(fit_glm)
+
+# Fixed effects
+fixef(fit_glm)
+
+se <- sqrt(diag(vcov(fit_glm))) #standard errors
+# table of estimates with 95% CI using errors we obtained above
+CI_betas <- cbind(Est = fixef(fit_glm), 
+                  Lower = fixef(fit_glm) - qnorm(1-alpha/2) * se, 
+                  Upper = fixef(fit_glm) + qnorm(1-alpha/2) * se)
+round(CI_betas,3)
+
+CI_OR <- exp(CI_betas)
+round(CI_OR,3)
+
+# Having a new tumor a i t leads to a 7.738 times the risk of death
+
+# Random effect
+ranef(fit_glm)
+
+dotplot(ranef(fit_glm))
+
+# Variances of the school intercept
+print(VarCorr(fit_glm), comp = c("Variance", "Std.Dev."))
+
+sigma2_b<- as.numeric(get_variance_intercept(fit_glm))
+
+VPC <- sigma2_b/(sigma2_b+sigma2_lat)
+VPC
+#This VPC value means that 1.4% of variation in the response is attributed to the classification by tissue source site
+
+logit_p.hat <- predict(fit_glm, logisticLUSC_full)
+gl <- binomial(link=logit)
+p.hat<-gl$linkinv(logit_p.hat)
+p_threshold = sum(logisticLUSC_full$stage)/dim(logisticLUSC_full)[1]
+Y.hat <- ifelse(p.hat<p_threshold, 0, 1) 
+confusion.matrix <- table(Predicted = Y.hat, Observed = logisticLUSC_full$stage)
+confusion.matrix 
+
+### violin plots ###
+
+library(vioplot)
+
+#LUSC vs LUAD for CALML3
+#I tried to add the mean point but I don't know why the points(...) do not show anything
+par(mfrow = c(1,2))
+
+vioplot(as.numeric(lusc["CALML3",]), horizontal = T, col = "blue", rectCol = "white", lineCol = "white", pchMed = 16, colMed = "red")
+points(mean(as.numeric(lusc["CALML3",])), pch = 19, col = "black", cex = 2)
+
+vioplot(as.numeric(luad["CALML3",]), horizontal = T, col = "lightblue", rectCol = "white", lineCol = "white", pchMed = 16, colMed = "red")
+points(mean(as.numeric(luad["CALML3",])), pch = 19, col = "black", cex = 2)
+
+legend("bottom", legend = c("LUAD", "LUSC", "median", "mean"), fill = c("blue", "lightblue", 0, 0), border = NA, bty = "n", inset = c(-0.3,-0.3), xpd = T, horiz = T, pch = c(NA, NA, 16, 19), col = c("red","black"))
+
+par(mfrow = c(1,1))
+
+#or, to make it  a little prettier;
+par(mfrow = c(1,2))
+
+vioplot(as.numeric(lusc["CALML3",]), horizontal = T, col = "dodgerblue", rectCol = "white", lineCol = "white", pchMed = 16, colMed = "red", main = "LUAD")
+points(mean(as.numeric(lusc["CALML3",])), pch = 23, col = "black", cex = 2)
+legend("bottomright", legend = "median",border = NA, bty = "n", inset = c(-0.2,-0.3), xpd = T, horiz = T, pch = 16, col = "red")
+
+vioplot(as.numeric(luad["CALML3",]), horizontal = T, col = "lightblue1", rectCol = "white", lineCol = "white", pchMed = 16, colMed = "red", main = "LUSC")
+points(mean(as.numeric(luad["CALML3",])), pch = 23, col = "black", cex = 2)
+legend("bottomleft", legend = "mean", border = NA, bty = "n", inset = c(-0.3,-0.3), xpd = T, horiz = T, pch = 19, col = "black")
+
+par(mfrow = c(1,1))
+
+# we could also compare the profile of different genes (if we choose to study more than one) I randomly chose these two just to give an idea
+vio_luad_df <- data.frame(as.numeric(luad["CTSE",]), as.numeric(luad["SLC7A2",]))
+vio_lusc_df <- data.frame(as.numeric(lusc["CTSE",]), as.numeric(lusc["SLC7A2",]))
+
+par(mfrow = c(1,2))
+
+vioplot( vio_luad_df, col = c("dodgerblue", "dodgerblue4"), names=c("CTSE", "SLC7A2"), , rectCol = "white", lineCol = "white", pchMed = 16, colMed = "red", main = "LUAD genes CTSE vs SLC7A2")
+vioplot( vio_lusc_df, col = c("lightblue1", "lightblue4"), names=c("CTSE", "SLC7A2"), , rectCol = "white", lineCol = "white", pchMed = 16, colMed = "red", main = "LUSC genes CTSE vs SLC7A2")
+legend("bottomleft", legend = "mean", border = NA, bty = "n", inset = c(-0.3,-0.3), xpd = T, horiz = T, pch = 19, col = "black")
+
+par(mfrow = c(1,1))
+
+#META-ANALYSIS
+library(metafor)
+library(metadat)
+HR <- c(1.30785, 1.41649)
+yi = log(HR)
+vi<-c(0.01,0.009)
+dat <- data.frame(yi=yi, sei=sei)
+trial <- 1:2 
+author <- c("Our project", "Yang Y, Wang M, Liu B")
+year <- c(2022, 2018)
+dat <- cbind.data.frame(trial=trial, author=author, year=year, dat)
+fit_FEM <- rma(yi, vi=vi, data=dat, method="FE")
+fit_FEM
+forest(fit_FEM, slab = paste(dat$author, dat$year, sep = ", "), xlim = c(-3, 3))
+text(-3, 10, "Study", pos = 4)
+text(3, 10, "Standardized Mean Difference [95% CI]", pos = 2)
