@@ -376,8 +376,8 @@ survivalLUSC <- merge(survivalLUSC,RSEM, by="submitter_id.samples")
 survivalLUSC <- na.omit(survivalLUSC)
 
 library(GGally)
-ggpairs(survivalLUSC, c("CTSE", "SLC47A2", "age", "new_tumor_a.i.t."))
-ggpairs(survivalLUSC, c("CTSE", "SLC47A2", "age", "new_tumor_a.i.t."), upper = list(continuous = "density", combo = "box_no_facet"), lower = list(continuous = "points", combo = "dot_no_facet"))
+ggpairs(survivalLUSC, c("CTSE", "SLC47A2", "age"))
+ggpairs(survivalLUSC, c("CTSE", "SLC47A2", "age"), upper = list(continuous = "density", combo = "box_no_facet"), lower = list(continuous = "points", combo = "dot_no_facet"))
 
 # Cox model
 survivalLUSC$submitter_id.samples <- NULL
@@ -385,10 +385,39 @@ survivalLUSC$X_PATIENT <- NULL
 survivalLUSC$type <- NULL
 survivalLUSC$SLC47A2 <- NULL
 
-fit_LUSCCTSE <- coxph(Surv(OS.time, OS) ~ ., data=survivalLUSC)
+fit_LUSCCTSE <- coxph(Surv(OS.time, OS) ~ age + CTSE, data=survivalLUSC)
 summary(fit_LUSCCTSE)
 cox.zph(fit_LUSCCTSE)
 ggcoxzph(cox.zph(fit_LUSCCTSE))
+
+# Shared frailty model
+library(frailtyEM)
+phenotypeLUSCt <- as.data.frame(phenotypeLUSC$age_at_initial_pathologic_diagnosis, phenotypeLUSC$submitter_id.samples)
+colnames(phenotypeLUSCt)[which(names(phenotypeLUSCt) == "phenotypeLUSC$age_at_initial_pathologic_diagnosis")] <- "age"
+phenotypeLUSCt$new_tumor_a.i.t. <- phenotypeLUSC$new_tumor_event_after_initial_treatment
+phenotypeLUSCt$tissue_source_site <- phenotypeLUSC$name.tissue_source_site
+phenotypeLUSCt$tumor_stage <- phenotypeLUSC$tumor_stage.diagnoses
+phenotypeLUSCt$ethnicity <- phenotypeLUSC$ethnicity.demographic 
+phenotypeLUSCt$race <- phenotypeLUSC$race.demographic
+phenotypeLUSCt$submitter_id.samples <- rownames(phenotypeLUSCt)
+survivalLUSC <- merge(survivalLUSC,phenotypeLUSCt, by="submitter_id.samples")
+RSEM <- as.data.frame(t(lusc["CTSE",]))
+RSEM$submitter_id.samples <- str_replace_all(rownames(RSEM), '[.]', '-')
+survivalLUSC$CTSE <- NULL
+survivalLUSC <- merge(survivalLUSC,RSEM, by="submitter_id.samples")
+RSEM <- as.data.frame(t(lusc["SLC47A2",]))
+RSEM$submitter_id.samples <- str_replace_all(rownames(RSEM), '[.]', '-')
+survivalLUSC$SLC47A2 <- NULL
+survivalLUSC <- merge(survivalLUSC,RSEM, by="submitter_id.samples")
+survivalLUSC <- na.omit(survivalLUSC)
+
+shared.mod <- emfrail(Surv(OS.time, OS) ~ CTSE + age.x + cluster(tissue_source_site),distribution = emfrail_dist(dist="gamma"), data=survivalLUSC)
+summary(shared.mod)
+autoplot(shared.mod,type="frail")+theme(axis.text.x = element_text(angle = 90))
+
+shared.mod <- emfrail(Surv(OS.time, OS) ~ CTSE + age.x + cluster(tumor_stage),distribution = emfrail_dist(dist="gamma"), data=survivalLUSC)
+summary(shared.mod)
+autoplot(shared.mod,type="frail")+theme(axis.text.x = element_text(angle = 90))
 
 # Logistic regression
 library(bestglm)
@@ -621,6 +650,6 @@ year <- c(2022, 2018)
 dat <- cbind.data.frame(trial=trial, author=author, year=year, dat)
 fit_FEM <- rma(yi, vi=vi, data=dat, method="FE")
 fit_FEM
-forest(fit_FEM, slab = paste(dat$author, dat$year, sep = ", "), xlim = c(-3, 3))
+forest(fit_FEM, slab = paste(dat$author, dat$year, sep = ", "), xlim = c(-3, 3), at = log(c(1,1.5, 2)), atransf = exp)
 text(-3, 10, "Study", pos = 4)
 text(3, 10, "Standardized Mean Difference [95% CI]", pos = 2)
